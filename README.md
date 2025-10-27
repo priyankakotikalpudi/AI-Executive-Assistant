@@ -67,11 +67,16 @@ brief = collect_pre_meeting_brief(
     graph_client,
     chat_ids=["19:meetingChatId"],
     meeting_ids=["MSpfx-generated-meeting-id"],
+    max_items=5,  # caps how many Outlook/Teams snippets are pulled into the brief
 )
 
 for line in brief.highlights:
     print("-", line)
 ```
+
+The helper deduplicates items that surface through multiple queries and respects the
+`max_items` limit across Outlook, Teams chat, and transcript sources so the brief stays
+focused on the most recent material.
 
 ### Running Tests
 

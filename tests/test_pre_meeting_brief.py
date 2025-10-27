@@ -140,3 +140,100 @@ def test_collect_pre_meeting_brief_filters_old_items():
     assert len(brief.sources) == 1
     assert brief.sources[0].id == "mail-recent"
     assert "Variance now within acceptable tolerance" in brief.highlights[1]
+
+
+def test_collect_pre_meeting_brief_deduplicates_by_source():
+    meeting = Meeting(
+        title="Design Review",
+        meeting_date=date(2024, 6, 20),
+        duration_minutes=30,
+        participants=["Casey"],
+        topics=["UI polish"],
+    )
+
+    outlook_url = "https://graph.microsoft.com/v1.0/users/me/messages"
+
+    responses = {
+        build_key(
+            outlook_url,
+            **{"$search": '"Design Review"', "$top": "2"},
+        ): {
+            "value": [
+                {
+                    "id": "shared-id",
+                    "subject": "Latest mock-ups",
+                    "receivedDateTime": "2024-06-18T09:00:00Z",
+                    "bodyPreview": "Mock-ups ready for sign-off.",
+                    "from": {"emailAddress": {"name": "Casey"}},
+                }
+            ]
+        },
+        build_key(
+            outlook_url,
+            **{"$search": '"Casey"', "$top": "2"},
+        ): {
+            "value": [
+                {
+                    "id": "shared-id",
+                    "subject": "Reminder",
+                    "receivedDateTime": "2024-06-18T11:00:00Z",
+                    "bodyPreview": "Same message surfaced by another search term.",
+                    "from": {"emailAddress": {"name": "Casey"}},
+                }
+            ]
+        },
+    }
+
+    client = FakeGraphClient(responses)
+
+    brief = collect_pre_meeting_brief(
+        meeting,
+        client,
+        lookback_days=5,
+        max_items=2,
+    )
+
+    assert len(brief.sources) == 1
+    assert brief.sources[0].subject == "Latest mock-ups"
+
+
+def test_collect_pre_meeting_brief_respects_max_items():
+    meeting = Meeting(
+        title="Roadmap Alignment",
+        meeting_date=date(2024, 9, 5),
+        duration_minutes=45,
+        participants=["Taylor"],
+        topics=["Dependencies"],
+    )
+
+    outlook_url = "https://graph.microsoft.com/v1.0/users/me/messages"
+
+    responses = {
+        build_key(
+            outlook_url,
+            **{"$search": '"Roadmap Alignment"', "$top": "3"},
+        ): {
+            "value": [
+                {
+                    "id": f"mail-{idx}",
+                    "subject": f"Thread {idx}",
+                    "receivedDateTime": "2024-09-01T09:00:00Z",
+                    "bodyPreview": "Update",
+                    "from": {"emailAddress": {"name": "Taylor"}},
+                }
+                for idx in range(5)
+            ]
+        }
+    }
+
+    client = FakeGraphClient(responses)
+
+    brief = collect_pre_meeting_brief(
+        meeting,
+        client,
+        lookback_days=10,
+        max_items=3,
+    )
+
+    assert len(brief.sources) == 3
+    assert all(source.id in {"mail-0", "mail-1", "mail-2"} for source in brief.sources)

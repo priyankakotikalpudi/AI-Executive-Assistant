@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Iterable, Mapping, MutableMapping, Protocol, Sequence
 
@@ -71,7 +71,8 @@ def collect_pre_meeting_brief(
 
     agenda = generate_agenda(meeting)
     search_terms = _derive_search_terms(meeting)
-    cutoff = meeting.meeting_date - timedelta(days=lookback_days)
+    cutoff_date = meeting.meeting_date - timedelta(days=lookback_days)
+    cutoff = datetime.combine(cutoff_date, time.min, tzinfo=timezone.utc)
 
     sources: list[MessageSnippet] = []
 
@@ -121,21 +122,25 @@ def _collect_outlook_messages(
     *,
     outlook_user: str,
     search_terms: Sequence[str],
-    cutoff: date,
+    cutoff: datetime,
     max_items: int,
 ) -> list[MessageSnippet]:
     snippets: list[MessageSnippet] = []
     endpoint = user_messages_url(outlook_user)
 
     for term in search_terms:
+        if len(snippets) >= max_items:
+            break
         params = {
             "$top": str(max_items),
             "$search": f'"{term}"',
         }
         payload = graph_client.get(endpoint, params=params)
         for item in payload.get("value", []):
+            if len(snippets) >= max_items:
+                break
             received = _parse_graph_datetime(item.get("receivedDateTime"))
-            if received and received.date() < cutoff:
+            if received and received < cutoff:
                 continue
             snippet = _graph_item_to_snippet(
                 item,
@@ -152,17 +157,21 @@ def _collect_chat_messages(
     graph_client: GraphClient,
     *,
     chat_ids: Sequence[str],
-    cutoff: date,
+    cutoff: datetime,
     max_items: int,
 ) -> list[MessageSnippet]:
     snippets: list[MessageSnippet] = []
     for chat_id in chat_ids:
+        if len(snippets) >= max_items:
+            break
         payload = graph_client.get(
             chat_messages_url(chat_id), params={"$top": str(max_items)}
         )
         for item in payload.get("value", []):
+            if len(snippets) >= max_items:
+                break
             created = _parse_graph_datetime(item.get("createdDateTime"))
-            if created and created.date() < cutoff:
+            if created and created < cutoff:
                 continue
             snippet = _graph_item_to_snippet(
                 item,
@@ -179,17 +188,21 @@ def _collect_transcripts(
     graph_client: GraphClient,
     *,
     meeting_ids: Sequence[str],
-    cutoff: date,
+    cutoff: datetime,
     max_items: int,
 ) -> list[MessageSnippet]:
     snippets: list[MessageSnippet] = []
     for meeting_id in meeting_ids:
+        if len(snippets) >= max_items:
+            break
         payload = graph_client.get(
             meeting_transcripts_url(meeting_id), params={"$top": str(max_items)}
         )
         for item in payload.get("value", []):
+            if len(snippets) >= max_items:
+                break
             creation = _parse_graph_datetime(item.get("createdDateTime"))
-            if creation and creation.date() < cutoff:
+            if creation and creation < cutoff:
                 continue
             transcript = item.get("content") or item.get("transcriptContent")
             snippet = _graph_item_to_snippet(
@@ -274,8 +287,9 @@ def _deduplicate_sources(
 ) -> MutableMapping[str, MessageSnippet]:
     unique: MutableMapping[str, MessageSnippet] = {}
     for snippet in snippets:
-        if snippet.id not in unique:
-            unique[snippet.id] = snippet
+        key = f"{snippet.source}:{snippet.id}"
+        if key not in unique:
+            unique[key] = snippet
     return unique
 
 
@@ -295,9 +309,25 @@ def _summarise_highlights(
 
 
 def _derive_search_terms(meeting: Meeting) -> Sequence[str]:
-    terms = {meeting.title}
-    terms.update(topic for topic in meeting.topics if topic)
+    ordered_terms: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str | None) -> None:
+        if not term:
+            return
+        cleaned = term.strip()
+        if not cleaned:
+            return
+        key = cleaned.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        ordered_terms.append(cleaned)
+
+    _add(meeting.title)
+    for topic in meeting.topics:
+        _add(topic)
     for participant in meeting.participants:
-        terms.add(participant)
-    return tuple(term for term in terms if term)
+        _add(participant)
+    return tuple(ordered_terms)
 
