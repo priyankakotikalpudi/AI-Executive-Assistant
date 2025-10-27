@@ -8,6 +8,11 @@ AI Executive Assistant is an intelligent assistant designed to help users prepar
 - **Integration**: Seamlessly integrates with popular calendar and task management tools.
 - **User-Friendly Interface**: Intuitive design for easy navigation and use.
 
+## Prerequisites
+
+- Python 3.10 or newer
+- `pip` for managing Python packages
+
 ## Installation Instructions
 1. Clone the repository:
    ```bash
@@ -17,18 +22,95 @@ AI Executive Assistant is an intelligent assistant designed to help users prepar
    ```bash
    cd AI-Executive-Assistant
    ```
-3. Install dependencies:
+3. (Optional) Create and activate a virtual environment:
    ```bash
-   npm install
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
+   ```
+4. Install the package in editable mode with development dependencies:
+   ```bash
+   pip install -e .[dev]
    ```
 
 ## Usage
-To start the application, run:
-```bash
-npm start
+The core meeting preparation utilities are provided as a Python package. You can import the meeting helpers in your own scripts or notebooks:
+
+```python
+from assistant.meeting import Meeting, generate_meeting_agenda
+
+meeting = Meeting(
+    title="Weekly Sync",
+    date="2024-05-01",
+    participants=["Alex", "Priya"],
+    topics=[{"title": "Roadmap", "owner": "Alex"}],
+)
+
+agenda = generate_meeting_agenda(meeting)
+print(agenda)
 ```
 
-Follow the prompts to set up your meetings and tasks.
+### Running Tests
+
+To validate the meeting preparation feature set, execute the unit tests with `pytest`:
+
+```bash
+pytest
+```
+
+## Connecting to Outlook and Teams via Azure
+
+To enable calendar and Teams integration you must register the assistant as an application within your Azure Active Directory tenant and grant Microsoft Graph permissions.
+
+1. **Create an app registration**
+   - Sign in to the [Azure Portal](https://portal.azure.com).
+   - Navigate to *Azure Active Directory → App registrations → New registration*.
+   - Provide a name (for example `AI Executive Assistant`) and select the supported account type that matches your organisation.
+   - Add a web redirect URI such as `https://localhost/auth` for local testing.
+
+2. **Configure client credentials**
+   - Note the generated *Application (client) ID* and *Directory (tenant) ID*.
+   - If you plan to use the authorization code flow, create a **client secret** under *Certificates & secrets* and store it securely.
+
+3. **Grant Microsoft Graph permissions**
+   - Under *API permissions*, add delegated permissions for:
+     - `Calendars.ReadWrite` and `Mail.ReadWrite` (Outlook calendar and mail access)
+     - `OnlineMeetings.ReadWrite` (Teams meeting creation)
+     - `ChannelMessage.Send` (posting to Teams channels)
+     - `User.Read` (basic profile access)
+   - Click *Grant admin consent* so the permissions are available to users.
+
+4. **Configure the assistant**
+   - Provide your Azure details in code using the new helpers:
+
+     ```python
+     from assistant import (
+         AzureAppConfig,
+         build_authorization_url,
+         build_token_request_payload,
+         calendar_events_url,
+         default_graph_scopes,
+         graph_request_headers,
+     )
+
+     config = AzureAppConfig(
+         tenant_id="contoso.onmicrosoft.com",
+         client_id="<CLIENT_ID>",
+         client_secret="<CLIENT_SECRET>",
+         redirect_uri="https://localhost/auth",
+         scopes=default_graph_scopes(),
+     )
+
+     authorization_url = build_authorization_url(config, state="state-token")
+     print("Navigate to:", authorization_url)
+     ```
+
+   - After the user completes the sign-in and you receive an authorization code at your redirect URI, exchange it for tokens using `build_token_request_payload` with the HTTP client of your choice. Use `graph_request_headers` alongside `calendar_events_url` or `teams_online_meetings_url` to call Microsoft Graph.
+
+5. **Recommended tooling**
+   - Use `msal` or `azure-identity` to handle the OAuth 2.0 flow and token caching.
+   - Microsoft Graph requests can be performed with `requests` or `msgraph-core` once you supply the bearer token headers generated above.
+
+These steps provide the Azure prerequisites needed for integrating the assistant with Outlook and Microsoft Teams.
 
 ## Contributing
 1. Fork the repository.
@@ -48,3 +130,4 @@ Follow the prompts to set up your meetings and tasks.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
