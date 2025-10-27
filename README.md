@@ -36,74 +36,18 @@ AI Executive Assistant is an intelligent assistant designed to help users prepar
 The core meeting preparation utilities are provided as a Python package. You can import the meeting helpers in your own scripts or notebooks:
 
 ```python
-from datetime import date
-
-from assistant import Meeting, generate_agenda
+from assistant.meeting import Meeting, generate_meeting_agenda
 
 meeting = Meeting(
     title="Weekly Sync",
-    meeting_date=date(2024, 5, 1),
-    duration_minutes=45,
+    date="2024-05-01",
     participants=["Alex", "Priya"],
-    topics=["Roadmap review", "Team metrics"],
+    topics=[{"title": "Roadmap", "owner": "Alex"}],
 )
 
-agenda = generate_agenda(meeting)
-for item in agenda:
-    print(item)
+agenda = generate_meeting_agenda(meeting)
+print(agenda)
 ```
-
-### Building a pre-meeting brief
-
-With Microsoft Graph access configured you can combine recent Outlook messages,
-Teams chats, and meeting transcripts into a single briefing:
-
-```python
-from assistant import collect_pre_meeting_brief
-
-# graph_client should expose a .get(url, params=None) method that returns JSON.
-brief = collect_pre_meeting_brief(
-    meeting,
-    graph_client,
-    chat_ids=["19:meetingChatId"],
-    meeting_ids=["MSpfx-generated-meeting-id"],
-    max_items=5,  # caps how many Outlook/Teams snippets are pulled into the brief
-)
-
-for line in brief.highlights:
-    print("-", line)
-```
-
-The helper deduplicates items that surface through multiple queries and respects the
-`max_items` limit across Outlook, Teams chat, and transcript sources so the brief stays
-focused on the most recent material. It automatically follows Graph pagination links to
-gather enough context and you can set `max_items=0` to produce an agenda-only brief
-without issuing any Graph requests.
-
-### Generating a post-meeting summary
-
-After a meeting concludes you can transform the transcript into a structured summary with
-discussion highlights, action items, and a ready-to-send email draft:
-
-```python
-from assistant import generate_post_meeting_summary
-
-transcript = """
-Alex: Discussed the launch timeline adjustments.
-Jordan: Action item - circulate the updated specification by Thursday.
-Sam: Next steps include validating analytics dashboards before release.
-"""
-
-summary = generate_post_meeting_summary(meeting, transcript)
-
-print(summary.email_subject)
-print(summary.email_body)
-```
-
-The helper analyses the transcript for topic matches, key decision phrases, and common
-action-item keywords so the follow-up email emphasises commitments. It also embeds the
-meeting agenda in the email body and gracefully falls back to placeholder text when no
-explicit actions are captured.
 
 ### Running Tests
 
@@ -138,19 +82,15 @@ To enable calendar and Teams integration you must register the assistant as an a
 4. **Configure the assistant**
    - Provide your Azure details in code using the new helpers:
 
-    ```python
-    from assistant import (
-        AzureAppConfig,
-        build_authorization_url,
-        build_token_request_payload,
-        calendar_events_url,
-        chat_messages_url,
-        default_graph_scopes,
-        graph_request_headers,
-        meeting_transcripts_url,
-        teams_online_meetings_url,
-        user_messages_url,
-    )
+     ```python
+     from assistant import (
+         AzureAppConfig,
+         build_authorization_url,
+         build_token_request_payload,
+         calendar_events_url,
+         default_graph_scopes,
+         graph_request_headers,
+     )
 
      config = AzureAppConfig(
          tenant_id="contoso.onmicrosoft.com",
@@ -164,7 +104,7 @@ To enable calendar and Teams integration you must register the assistant as an a
      print("Navigate to:", authorization_url)
      ```
 
-   - After the user completes the sign-in and you receive an authorization code at your redirect URI, exchange it for tokens using `build_token_request_payload` with the HTTP client of your choice. Use `graph_request_headers` alongside `user_messages_url`, `chat_messages_url`, `meeting_transcripts_url`, `calendar_events_url`, or `teams_online_meetings_url` to call Microsoft Graph.
+   - After the user completes the sign-in and you receive an authorization code at your redirect URI, exchange it for tokens using `build_token_request_payload` with the HTTP client of your choice. Use `graph_request_headers` alongside `calendar_events_url` or `teams_online_meetings_url` to call Microsoft Graph.
 
 5. **Recommended tooling**
    - Use `msal` or `azure-identity` to handle the OAuth 2.0 flow and token caching.

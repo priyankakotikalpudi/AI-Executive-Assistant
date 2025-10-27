@@ -131,26 +131,6 @@ def teams_chat_message_url(team_id: str, channel_id: str) -> str:
     )
 
 
-def user_messages_url(user: str = "me") -> str:
-    """Return the Graph API URL for listing Outlook messages."""
-
-    return f"{_GRAPH_BASE_URL}/users/{user}/messages"
-
-
-def chat_messages_url(chat_id: str) -> str:
-    """Return the Graph API URL for retrieving Teams chat messages."""
-
-    _require_value(chat_id, "chat_id")
-    return f"{_GRAPH_BASE_URL}/chats/{chat_id}/messages"
-
-
-def meeting_transcripts_url(meeting_id: str) -> str:
-    """Return the Graph API URL for retrieving transcripts for a Teams meeting."""
-
-    _require_value(meeting_id, "meeting_id")
-    return f"{_GRAPH_BASE_URL}/communications/onlineMeetings/{meeting_id}/transcripts"
-
-
 def _require_redirect_uri(config: AzureAppConfig) -> str:
     if not config.redirect_uri:
         raise ValueError("redirect_uri must be provided for interactive flows")

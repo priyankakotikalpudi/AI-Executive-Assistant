@@ -5,13 +5,10 @@ from assistant.azure import (
     build_authorization_url,
     build_token_request_payload,
     calendar_events_url,
-    chat_messages_url,
     default_graph_scopes,
     graph_request_headers,
-    meeting_transcripts_url,
     teams_chat_message_url,
     teams_online_meetings_url,
-    user_messages_url,
 )
 
 
@@ -79,13 +76,4 @@ def test_graph_urls_cover_outlook_and_teams_endpoints() -> None:
     assert (
         teams_chat_message_url("team-id", "channel-id")
         == "https://graph.microsoft.com/v1.0/teams/team-id/channels/channel-id/messages"
-    )
-    assert user_messages_url() == "https://graph.microsoft.com/v1.0/users/me/messages"
-    assert (
-        chat_messages_url("chat-id")
-        == "https://graph.microsoft.com/v1.0/chats/chat-id/messages"
-    )
-    assert (
-        meeting_transcripts_url("meeting-id")
-        == "https://graph.microsoft.com/v1.0/communications/onlineMeetings/meeting-id/transcripts"
     )
