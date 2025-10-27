@@ -76,7 +76,9 @@ for line in brief.highlights:
 
 The helper deduplicates items that surface through multiple queries and respects the
 `max_items` limit across Outlook, Teams chat, and transcript sources so the brief stays
-focused on the most recent material.
+focused on the most recent material. It automatically follows Graph pagination links to
+gather enough context and you can set `max_items=0` to produce an agenda-only brief
+without issuing any Graph requests.
 
 ### Running Tests
 

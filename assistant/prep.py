@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from html.parser import HTMLParser
-from typing import Iterable, Mapping, MutableMapping, Protocol, Sequence
+from typing import Iterable, Iterator, Mapping, MutableMapping, Protocol, Sequence
 
 from .azure import chat_messages_url, meeting_transcripts_url, user_messages_url
 from .meeting import AgendaItem, Meeting, generate_agenda
@@ -74,37 +74,41 @@ def collect_pre_meeting_brief(
     cutoff_date = meeting.meeting_date - timedelta(days=lookback_days)
     cutoff = datetime.combine(cutoff_date, time.min, tzinfo=timezone.utc)
 
-    sources: list[MessageSnippet] = []
+    sources: list[MessageSnippet]
+    if max_items <= 0:
+        sources = []
+    else:
+        sources = []
 
-    sources.extend(
-        _collect_outlook_messages(
-            graph_client,
-            outlook_user=outlook_user,
-            search_terms=search_terms,
-            cutoff=cutoff,
-            max_items=max_items,
-        )
-    )
-
-    if chat_ids:
         sources.extend(
-            _collect_chat_messages(
+            _collect_outlook_messages(
                 graph_client,
-                chat_ids=chat_ids,
+                outlook_user=outlook_user,
+                search_terms=search_terms,
                 cutoff=cutoff,
                 max_items=max_items,
             )
         )
 
-    if meeting_ids:
-        sources.extend(
-            _collect_transcripts(
-                graph_client,
-                meeting_ids=meeting_ids,
-                cutoff=cutoff,
-                max_items=max_items,
+        if chat_ids:
+            sources.extend(
+                _collect_chat_messages(
+                    graph_client,
+                    chat_ids=chat_ids,
+                    cutoff=cutoff,
+                    max_items=max_items,
+                )
             )
-        )
+
+        if meeting_ids:
+            sources.extend(
+                _collect_transcripts(
+                    graph_client,
+                    meeting_ids=meeting_ids,
+                    cutoff=cutoff,
+                    max_items=max_items,
+                )
+            )
 
     unique_sources = _deduplicate_sources(sources)
     highlights = _summarise_highlights(unique_sources, meeting)
@@ -131,14 +135,19 @@ def _collect_outlook_messages(
     for term in search_terms:
         if len(snippets) >= max_items:
             break
+        remaining = max_items - len(snippets)
+        if remaining <= 0:
+            break
         params = {
-            "$top": str(max_items),
+            "$top": str(remaining),
             "$search": f'"{term}"',
         }
-        payload = graph_client.get(endpoint, params=params)
-        for item in payload.get("value", []):
-            if len(snippets) >= max_items:
-                break
+        for item in _iterate_graph_collection(
+            graph_client,
+            endpoint,
+            params=params,
+            remaining=remaining,
+        ):
             received = _parse_graph_datetime(item.get("receivedDateTime"))
             if received and received < cutoff:
                 continue
@@ -164,12 +173,15 @@ def _collect_chat_messages(
     for chat_id in chat_ids:
         if len(snippets) >= max_items:
             break
-        payload = graph_client.get(
-            chat_messages_url(chat_id), params={"$top": str(max_items)}
-        )
-        for item in payload.get("value", []):
-            if len(snippets) >= max_items:
-                break
+        remaining = max_items - len(snippets)
+        if remaining <= 0:
+            break
+        for item in _iterate_graph_collection(
+            graph_client,
+            chat_messages_url(chat_id),
+            params={"$top": str(remaining)},
+            remaining=remaining,
+        ):
             created = _parse_graph_datetime(item.get("createdDateTime"))
             if created and created < cutoff:
                 continue
@@ -195,12 +207,15 @@ def _collect_transcripts(
     for meeting_id in meeting_ids:
         if len(snippets) >= max_items:
             break
-        payload = graph_client.get(
-            meeting_transcripts_url(meeting_id), params={"$top": str(max_items)}
-        )
-        for item in payload.get("value", []):
-            if len(snippets) >= max_items:
-                break
+        remaining = max_items - len(snippets)
+        if remaining <= 0:
+            break
+        for item in _iterate_graph_collection(
+            graph_client,
+            meeting_transcripts_url(meeting_id),
+            params={"$top": str(remaining)},
+            remaining=remaining,
+        ):
             creation = _parse_graph_datetime(item.get("createdDateTime"))
             if creation and creation < cutoff:
                 continue
@@ -261,9 +276,50 @@ def _parse_graph_datetime(value: object) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _iterate_graph_collection(
+    graph_client: GraphClient,
+    url: str,
+    *,
+    params: Mapping[str, str] | None,
+    remaining: int,
+) -> Iterator[Mapping[str, object]]:
+    """Yield items from a Graph collection request, following next links."""
+
+    next_url = url
+    next_params: Mapping[str, str] | None = params
+    remaining_items = remaining
+    seen_links: set[str] = set()
+
+    while remaining_items > 0 and next_url:
+        payload = graph_client.get(next_url, params=next_params)
+        items = payload.get("value") if isinstance(payload, Mapping) else None
+        if not isinstance(items, list):
+            items = []
+
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            yield item
+            remaining_items -= 1
+            if remaining_items <= 0:
+                return
+
+        next_link = payload.get("@odata.nextLink") if isinstance(payload, Mapping) else None
+        if not next_link:
+            break
+        next_url = str(next_link)
+        if next_url in seen_links:
+            break
+        seen_links.add(next_url)
+        next_params = None
 
 
 def _strip_html(value: str) -> str:

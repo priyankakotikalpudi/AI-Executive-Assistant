@@ -113,7 +113,7 @@ def test_collect_pre_meeting_brief_filters_old_items():
                 {
                     "id": "mail-recent",
                     "subject": "Budget variance summary",
-                    "receivedDateTime": "2024-07-10T09:00:00Z",
+                    "receivedDateTime": "2024-07-10T09:00:00",
                     "bodyPreview": "Variance now within acceptable tolerance thanks to new controls.",
                     "from": {"emailAddress": {"name": "Morgan"}},
                 },
@@ -170,7 +170,7 @@ def test_collect_pre_meeting_brief_deduplicates_by_source():
         },
         build_key(
             outlook_url,
-            **{"$search": '"Casey"', "$top": "2"},
+            **{"$search": '"Casey"', "$top": "1"},
         ): {
             "value": [
                 {
@@ -237,3 +237,87 @@ def test_collect_pre_meeting_brief_respects_max_items():
 
     assert len(brief.sources) == 3
     assert all(source.id in {"mail-0", "mail-1", "mail-2"} for source in brief.sources)
+
+
+def test_collect_pre_meeting_brief_handles_pagination():
+    meeting = Meeting(
+        title="Paginated Sync",
+        meeting_date=date(2024, 10, 1),
+        duration_minutes=30,
+        participants=["Jamie"],
+        topics=["Updates"],
+    )
+
+    outlook_url = "https://graph.microsoft.com/v1.0/users/me/messages"
+
+    next_link = f"{outlook_url}?$skiptoken=page2"
+    responses = {
+        build_key(
+            outlook_url,
+            **{"$search": '"Paginated Sync"', "$top": "3"},
+        ): {
+            "value": [
+                {
+                    "id": "mail-1",
+                    "subject": "First",
+                    "receivedDateTime": "2024-09-30T12:00:00Z",
+                    "bodyPreview": "Part one",
+                    "from": {"emailAddress": {"name": "Jamie"}},
+                }
+            ],
+            "@odata.nextLink": next_link,
+        },
+        build_key(next_link): {
+            "value": [
+                {
+                    "id": "mail-2",
+                    "subject": "Second",
+                    "receivedDateTime": "2024-09-30T13:00:00Z",
+                    "bodyPreview": "Part two",
+                    "from": {"emailAddress": {"name": "Jamie"}},
+                },
+                {
+                    "id": "mail-3",
+                    "subject": "Third",
+                    "receivedDateTime": "2024-09-30T14:00:00Z",
+                    "bodyPreview": "Part three",
+                    "from": {"emailAddress": {"name": "Jamie"}},
+                },
+            ]
+        },
+    }
+
+    client = FakeGraphClient(responses)
+
+    brief = collect_pre_meeting_brief(
+        meeting,
+        client,
+        lookback_days=5,
+        max_items=3,
+    )
+
+    assert len(brief.sources) == 3
+    assert build_key(next_link) in client.requests
+
+
+def test_collect_pre_meeting_brief_skips_calls_when_max_items_zero():
+    meeting = Meeting(
+        title="No Sources",
+        meeting_date=date(2024, 8, 1),
+        duration_minutes=30,
+        participants=["Taylor"],
+        topics=["Status"],
+    )
+
+    client = FakeGraphClient({})
+
+    brief = collect_pre_meeting_brief(
+        meeting,
+        client,
+        lookback_days=7,
+        max_items=0,
+    )
+
+    assert brief.sources == ()
+    assert client.requests == []
+    assert brief.highlights == ["Focus topics: Status"]
