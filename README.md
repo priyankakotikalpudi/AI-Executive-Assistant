@@ -80,6 +80,31 @@ focused on the most recent material. It automatically follows Graph pagination l
 gather enough context and you can set `max_items=0` to produce an agenda-only brief
 without issuing any Graph requests.
 
+### Generating a post-meeting summary
+
+After a meeting concludes you can transform the transcript into a structured summary with
+discussion highlights, action items, and a ready-to-send email draft:
+
+```python
+from assistant import generate_post_meeting_summary
+
+transcript = """
+Alex: Discussed the launch timeline adjustments.
+Jordan: Action item - circulate the updated specification by Thursday.
+Sam: Next steps include validating analytics dashboards before release.
+"""
+
+summary = generate_post_meeting_summary(meeting, transcript)
+
+print(summary.email_subject)
+print(summary.email_body)
+```
+
+The helper analyses the transcript for topic matches, key decision phrases, and common
+action-item keywords so the follow-up email emphasises commitments. It also embeds the
+meeting agenda in the email body and gracefully falls back to placeholder text when no
+explicit actions are captured.
+
 ### Running Tests
 
 To validate the meeting preparation feature set, execute the unit tests with `pytest`:

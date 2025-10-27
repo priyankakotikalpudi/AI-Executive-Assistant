@@ -18,6 +18,8 @@ from .prep import (
     MessageSnippet,
     PreMeetingBrief,
     collect_pre_meeting_brief,
+    generate_post_meeting_summary,
+    PostMeetingSummary,
 )
 
 __all__ = [
@@ -33,8 +35,10 @@ __all__ = [
     "default_graph_scopes",
     "collect_pre_meeting_brief",
     "generate_agenda",
+    "generate_post_meeting_summary",
     "graph_request_headers",
     "meeting_transcripts_url",
+    "PostMeetingSummary",
     "teams_chat_message_url",
     "teams_online_meetings_url",
     "user_messages_url",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from html.parser import HTMLParser
@@ -40,6 +41,18 @@ class PreMeetingBrief:
     agenda: Sequence[AgendaItem]
     highlights: Sequence[str]
     sources: Sequence[MessageSnippet]
+
+
+@dataclass(frozen=True)
+class PostMeetingSummary:
+    """Structured representation of a post-meeting follow-up package."""
+
+    meeting: Meeting
+    agenda: Sequence[AgendaItem]
+    discussion_items: Sequence[str]
+    action_items: Sequence[str]
+    email_subject: str
+    email_body: str
 
 
 class _HTMLStripper(HTMLParser):
@@ -118,6 +131,55 @@ def collect_pre_meeting_brief(
         agenda=agenda,
         highlights=highlights,
         sources=tuple(unique_sources.values()),
+    )
+
+
+def generate_post_meeting_summary(
+    meeting: Meeting,
+    transcript: str,
+    *,
+    max_discussion_items: int = 5,
+    max_action_items: int = 5,
+    additional_notes: Sequence[str] | None = None,
+) -> PostMeetingSummary:
+    """Summarise a meeting transcript into discussion points and actions."""
+
+    if max_discussion_items < 0:
+        raise ValueError("max_discussion_items cannot be negative")
+    if max_action_items < 0:
+        raise ValueError("max_action_items cannot be negative")
+    if not transcript or not transcript.strip():
+        raise ValueError("transcript cannot be empty")
+
+    agenda = generate_agenda(meeting)
+    discussion_items, action_items = _analyse_transcript(
+        transcript,
+        meeting,
+        max_discussion_items=max_discussion_items,
+        max_action_items=max_action_items,
+    )
+
+    if additional_notes:
+        for note in additional_notes:
+            cleaned = note.strip()
+            if cleaned:
+                discussion_items.append(_normalise_statement(cleaned))
+
+    subject = f"{meeting.title} – Summary & Actions ({meeting.meeting_date.isoformat()})"
+    email_body = _build_summary_email(
+        meeting,
+        agenda,
+        discussion_items,
+        action_items,
+    )
+
+    return PostMeetingSummary(
+        meeting=meeting,
+        agenda=tuple(agenda),
+        discussion_items=tuple(discussion_items),
+        action_items=tuple(action_items),
+        email_subject=subject,
+        email_body=email_body,
     )
 
 
@@ -386,4 +448,152 @@ def _derive_search_terms(meeting: Meeting) -> Sequence[str]:
     for participant in meeting.participants:
         _add(participant)
     return tuple(ordered_terms)
+
+
+def _analyse_transcript(
+    transcript: str,
+    meeting: Meeting,
+    *,
+    max_discussion_items: int,
+    max_action_items: int,
+) -> tuple[list[str], list[str]]:
+    sentences = _tokenise_transcript(transcript)
+    topics = [topic.lower() for topic in meeting.topics]
+    discussion_items: list[str] = []
+    action_items: list[str] = []
+    seen_discussion: set[str] = set()
+    seen_actions: set[str] = set()
+
+    action_keywords = (
+        "action item",
+        "action:",
+        "todo",
+        "to-do",
+        "follow up",
+        "follow-up",
+        "next step",
+        "next steps",
+        "owner:",
+        "due",
+        "assign",
+    )
+    highlight_keywords = (
+        "discussed",
+        "decided",
+        "agreed",
+        "highlight",
+        "reviewed",
+        "noted",
+        "update",
+        "question",
+    )
+
+    for sentence in sentences:
+        if len(action_items) >= max_action_items and len(discussion_items) >= max_discussion_items:
+            break
+
+        cleaned = _normalise_statement(sentence)
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+
+        is_action = any(keyword in lowered for keyword in action_keywords)
+        if is_action and len(action_items) < max_action_items:
+            if cleaned not in seen_actions:
+                action_items.append(cleaned)
+                seen_actions.add(cleaned)
+            continue
+
+        topic_match = any(topic in lowered for topic in topics if topic)
+        highlight_match = any(keyword in lowered for keyword in highlight_keywords)
+
+        if (topic_match or highlight_match or len(cleaned.split()) >= 6) and len(discussion_items) < max_discussion_items:
+            if cleaned not in seen_discussion:
+                discussion_items.append(cleaned)
+                seen_discussion.add(cleaned)
+
+    return discussion_items, action_items
+
+
+def _tokenise_transcript(transcript: str) -> list[str]:
+    cleaned_text = transcript.replace("\r", "\n")
+    segments = re.split(r"\n+", cleaned_text)
+    sentences: list[str] = []
+    for segment in segments:
+        stripped = segment.strip(" -•\t")
+        if not stripped:
+            continue
+        parts = re.split(r"(?<=[.!?])\s+", stripped)
+        for part in parts:
+            statement = part.strip(" -•\t")
+            if statement:
+                sentences.append(statement)
+    return sentences
+
+
+def _normalise_statement(value: str) -> str:
+    compact = " ".join(value.split())
+    if not compact:
+        return ""
+
+    if ":" in compact:
+        speaker, remainder = compact.split(":", 1)
+        speaker = speaker.strip()
+        remainder = remainder.strip()
+        if speaker and remainder and len(speaker.split()) <= 4:
+            compact = f"{speaker.title()}: {remainder}"
+
+    if compact.endswith(tuple(".!?")):
+        return compact
+    return compact + "."
+
+
+def _build_summary_email(
+    meeting: Meeting,
+    agenda: Sequence[AgendaItem],
+    discussion_items: Sequence[str],
+    action_items: Sequence[str],
+) -> str:
+    lines: list[str] = []
+    facilitator = meeting.primary_facilitator()
+    meeting_date = meeting.meeting_date.strftime("%B %d, %Y")
+
+    lines.append("Hi team,")
+    lines.append("")
+    lines.append(
+        f"Thanks for joining {meeting.title} on {meeting_date}. Here's a quick recap and next steps."
+    )
+    lines.append("")
+
+    lines.append("Agenda reviewed:")
+    for item in agenda:
+        duration = f" ({item.duration_minutes} min)" if item.duration_minutes else ""
+        owner = f" – {item.owner}" if item.owner else ""
+        lines.append(f"- {item.title}{owner}{duration}")
+
+    discussion_section = list(discussion_items)
+    if not discussion_section:
+        discussion_section.append("No major discussion items were captured.")
+
+    lines.append("")
+    lines.append("Discussion highlights:")
+    for highlight in discussion_section:
+        lines.append(f"- {highlight}")
+
+    action_section = list(action_items)
+    if not action_section:
+        action_section.append("No explicit action items recorded during the meeting.")
+
+    lines.append("")
+    lines.append("Action items:")
+    for action in action_section:
+        lines.append(f"- {action}")
+
+    lines.append("")
+    if facilitator:
+        lines.append(f"Thanks,\n{facilitator}")
+    else:
+        lines.append("Thanks,\nAI Executive Assistant")
+
+    return "\n".join(lines)
 
